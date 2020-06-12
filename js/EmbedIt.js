@@ -7,9 +7,13 @@ embedit.video = function (webmUrl, mp4Url) {
     // video. We can only circumvent that by putting the src 
     // on the <video> tag :/
     
-    var video = $('<video autoplay playsinline muted loop poster="true" />');
-    video.append($('<source/>').attr('src', webmUrl));
-    video.append($('<source/>').attr('src', mp4Url));
+    var video = $('<video autoplay playsinline loop />');
+    if (webmUrl) {
+        video.append($('<source/>').attr('src', webmUrl));
+    }
+    if (mp4Url) {
+        video.append($('<source/>').attr('src', mp4Url));
+    }
     return video;
     //video.attr("src", urls[0]);
     /*
@@ -37,6 +41,28 @@ embedit.video = function (webmUrl, mp4Url) {
 
 embedit.unsupported = function(url) {
     console.log("Omitting unsupported url: '" + url + "'");
+}
+
+embedit.redGifConvert = function (url, embedFunc) {
+    var name = embedit.redGifUrlToId(url);
+
+    if(!name) {
+        console.log("Failed to identify redgif name");
+        return false;
+    }
+
+    $.ajax({
+        url: 'https://api.redgifs.com/v1/gfycats/' + name,
+        dataType: "json",
+        success: function(data) {
+            if (!data || !data.gfyItem || !data.gfyItem.webmUrl) {
+                embedFunc(null);
+                return;
+            }
+            embedFunc(embedit.video(data.gfyItem.webmUrl, data.gfyItem.mp4Url));
+        }
+    })
+    return true;
 }
 
 embedit.convertors = [
@@ -97,10 +123,20 @@ embedit.convertors = [
                         return;
                     }
                     embedFunc(embedit.video(data.gfyItem.webmUrl, data.gfyItem.mp4Url));
+                },
+                error: function() {
+                    var newUrl = url.replace("gfycat.com/", "redgifs.com/watch/");
+                    console.log("gfycat failed load, trying redgif", newUrl);
+                    embedit.redGifConvert(newUrl, embedFunc);
                 }
             })
             return true;
         },
+    },
+    {
+        name: "redgifs",
+        detect: /redgifs\.com.*/,
+        convert: embedit.redGifConvert,
     },
     {
         name: "v.reddit",
@@ -161,6 +197,16 @@ embedit.gfyUrlToId = function(url) {
     if(match && match.length > 2) {
         return match[2];
     } else {
+        return false;
+    }
+}
+
+embedit.redGifUrlToId = function(url) {
+    var matches = url.match(/redgifs.com\/watch\/([\w-]+)\/?/i);
+
+    if (matches && matches.length > 1) {
+        return matches[1];
+    } else { 
         return false;
     }
 }

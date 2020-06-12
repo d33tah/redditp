@@ -17,14 +17,15 @@ rp.settings = {
     timeToNextSlide: 6 * 1000,
     cookieDays: 300,
     goodExtensions: ['.jpg', '.jpeg', '.gif', '.bmp', '.png'],
-    nsfw: true
+    nsfw: true,
+    sound: false
 };
 
 rp.session = {
     // 0-based index to set which picture to show first
     // init to -1 until the first image is loaded
     activeIndex: -1,
-    
+
     // Variable to store if the animation is playing or not
     isAnimating: false,
 
@@ -52,7 +53,7 @@ function reportError(errMessage) {
     } else {
         console.log('No error handler yet:' + errMessage);
     }
-    toastr.error(errMessage + ', please alert ubershmekel on <a href="https://github.com/ubershmekel/redditp/issues">github</a>');    
+    toastr.error(errMessage + ', please alert ubershmekel on <a href="https://github.com/ubershmekel/redditp/issues">github</a>');
 }
 
 
@@ -89,14 +90,15 @@ $(function () {
     // and instead the minimize buttons should be used.
     //setupFadeoutOnIdle();
 
-    var getNextSlideIndex = function(currentIndex) {
-        if(!rp.settings.nsfw) {
+    var getNextSlideIndex = function (currentIndex) {
+        if (!rp.settings.nsfw) {
             // Skip any nsfw if you should
-            for(var i = currentIndex + 1; i < rp.photos.length; i++) {
+            for (var i = currentIndex + 1; i < rp.photos.length; i++) {
                 if (!rp.photos[i].over18) {
                     return i;
                 }
             }
+            return 0;
         }
         if (isLastImage(getNextSlideIndex) && !rp.session.loadingNextImages) {
             // The only reason we got here and there aren't more pictures yet
@@ -105,41 +107,46 @@ $(function () {
         }
         // Just go to the next slide, this should be the common case
         return currentIndex + 1;
-    }
+    };
 
     function nextSlide() {
         var next = getNextSlideIndex(rp.session.activeIndex);
+        saveHistory(next);
         startAnimation(next);
     }
-    
+
     function prevSlide() {
-        if(!rp.settings.nsfw) {
-            for(var i = rp.session.activeIndex - 1; i > 0; i--) {
-                if (!rp.photos[i].over18) {
-                    return startAnimation(i);
+        var index = rp.session.activeIndex - 1;
+        if (!rp.settings.nsfw) {
+            for (; index > 0; index--) {
+                if (!rp.photos[index].over18) {
+                    break;
                 }
             }
+            // index will be zero here if no sfw items found
         }
-        startAnimation(rp.session.activeIndex - 1);
+
+        saveHistory(index);
+        startAnimation(index);
     }
 
-    
+
     var autoNextSlide = function () {
         if (rp.settings.shouldAutoNextSlide) {
             // startAnimation takes care of the setTimeout
             nextSlide();
         }
     };
-    
-    function open_in_background(selector){
+
+    function open_in_background(selector) {
         // as per https://developer.mozilla.org/en-US/docs/Web/API/event.initMouseEvent
         // works on latest chrome, safari and opera
         var link = $(selector)[0];
-        
+
         // Simulating a ctrl key won't trigger a background tab on IE and Firefox ( https://bugzilla.mozilla.org/show_bug.cgi?id=812202 )
         // so we need to open a new window
-        if ( navigator.userAgent.match(/msie/i) || navigator.userAgent.match(/trident/i)  || navigator.userAgent.match(/firefox/i) ){
-            window.open(link.href,'_blank');
+        if (navigator.userAgent.match(/msie/i) || navigator.userAgent.match(/trident/i) || navigator.userAgent.match(/firefox/i)) {
+            window.open(link.href, '_blank');
         } else {
             var mev = document.createEvent("MouseEvents");
             mev.initMouseEvent("click", true, true, window, 0, 0, 0, 0, 0, true, false, false, true, 0, null);
@@ -161,7 +168,7 @@ $(function () {
     var OPENSTATE_ATTR = "data-openstate";
     $('.collapser').click(function () {
         var state = $(this).attr(OPENSTATE_ATTR);
-        if (state == "open") {
+        if (state === "open") {
             // close it
             $(this).text("+");
             // move to the left just enough so the collapser arrow is visible
@@ -194,17 +201,33 @@ $(function () {
     var cookieNames = {
         nsfwCookie: "nsfwCookie",
         shouldAutoNextSlideCookie: "shouldAutoNextSlideCookie",
-        timeToNextSlideCookie: "timeToNextSlideCookie"
+        timeToNextSlideCookie: "timeToNextSlideCookie",
+        soundCookie: "soundCookie"
     };
 
     var setCookie = function (c_name, value) {
         Cookies.set(c_name, value, { expires: rp.settings.cookieDays });
     };
 
-    
+
     var getCookie = function (c_name) {
         // undefined in case nothing found
         return Cookies.get(c_name);
+    };
+
+    var updateSound = function () {
+        rp.settings.sound = $('#sound').is(':checked');
+        setCookie(cookieNames.soundCookie, rp.settings.sound);
+        var videoTags = document.getElementsByTagName('video');
+        if (videoTags.length === 1) {
+            videoTags[0].muted = !rp.settings.sound;
+        }
+        var audioTags = document.getElementsByTagName('audio');
+        if (audioTags.length === 1) {
+            audioTags[0].muted = !rp.settings.sound;
+        } else {
+            console.log(audioTags);
+        }
     };
 
     var resetNextSlideTimer = function () {
@@ -218,7 +241,15 @@ $(function () {
         resetNextSlideTimer();
     };
 
-    var toggleFullScreen = function() {
+    var toggleSound = function() {
+        $("#sound").each(function(){
+            this.checked = !this.checked;
+            console.log(this.checked);
+            $(this).trigger('change');
+        });
+    };
+
+    var toggleFullScreen = function () {
         var elem = document.getElementById('page');
         if (document.fullscreenElement || // alternative standard method
             document.mozFullScreenElement || document.webkitFullscreenElement || document.msFullscreenElement) { // current working methods
@@ -259,6 +290,16 @@ $(function () {
         }
         $('#nsfw').change(updateNsfw);
 
+        // Fix sound cookie
+        var soundByCookie = getCookie(cookieNames.soundCookie);
+        if (soundByCookie === undefined) {
+            rp.settings.sound = false;
+        } else {
+            rp.settings.sound = (soundByCookie === "true");
+            $("#sound").prop("checked", rp.settings.sound);
+        }
+        $('#sound').change(updateSound);
+
         var autoByCookie = getCookie(cookieNames.shouldAutoNextSlideCookie);
         if (autoByCookie === undefined) {
             updateAutoNext();
@@ -281,11 +322,11 @@ $(function () {
             rp.settings.timeToNextSlide = parseFloat(timeByCookie) * 1000;
             $('#timeToNextSlide').val(timeByCookie);
         }
-        
+
         $('#fullScreenButton').click(toggleFullScreen);
 
         $('#timeToNextSlide').keyup(updateTimeToNextSlide);
-        
+
         $('#prevButton').click(prevSlide);
         $('#nextButton').click(nextSlide);
     };
@@ -305,9 +346,10 @@ $(function () {
     var imageTypes = {
         image: 'image',
         gfycat: 'gfycat',
-        gifv: 'gifv'
-    }
-    
+        gifv: 'gifv',
+        redgif: 'redgif'
+    };
+
     var addImageSlide = function (pic) {
         /*
         var pic = {
@@ -326,14 +368,26 @@ $(function () {
         if (pic.url.indexOf('gfycat.com') >= 0) {
             pic.type = imageTypes.gfycat;
             pic.url = pic.url.replace(http_prefix, https_prefix);
+        } else if (pic.url.indexOf('redgifs.com') >= 0) {
+            pic.type = imageTypes.redgif;
+            pic.url = pic.url.replace(http_prefix, https_prefix);
         } else if (pic.url.indexOf('//v.redd.it/') >= 0) {
             // NOTE DO NOT ADD DOMAINS HERE - MODIFY EMBEDIT.JS instead
             // NOTE DO NOT ADD DOMAINS HERE - MODIFY EMBEDIT.JS instead
             // NOTE DO NOT ADD DOMAINS HERE - MODIFY EMBEDIT.JS instead
             // Sadly, we have to add domains here or they get dropped in the "cannot display url" error below.
             // Need to redesign this redditp thing.
-            pic.type = imageTypes.gifv;
-            pic.url = pic.data.media.reddit_video.fallback_url;
+            if (pic.data.media) {
+                pic.type = imageTypes.gifv;
+                pic.url = pic.data.media.reddit_video.fallback_url;
+            } else if (pic.data.crosspost_parent_list && pic.data.crosspost_parent_list[0].media) {
+                pic.type = imageTypes.gifv;
+                pic.url = pic.data.crosspost_parent_list[0].media.reddit_video.fallback_url;
+            } else {
+                // some crossposts don't have a pic.data.media obj?
+                return;
+            }
+            pic.sound = pic.url.substring(0, pic.url.lastIndexOf('/')) + "/audio";
         } else if (pic.url.search(/^http.*imgur.*gifv?$/) > -1) {
             pic.type = imageTypes.gifv;
             pic.url = pic.url.replace(http_prefix, https_prefix);
@@ -341,7 +395,7 @@ $(function () {
             // simple image
         } else {
             var betterUrl = tryConvertUrl(pic.url);
-            if(betterUrl !== '') {
+            if (betterUrl !== '') {
                 pic.url = betterUrl;
             } else {
                 if (rp.settings.debug) {
@@ -352,7 +406,14 @@ $(function () {
         }
 
         rp.session.foundOneImage = true;
-        
+
+        for (i = 0; i < rp.photos.length; i += 1) {
+            if (pic.url === rp.photos[i].url) {
+                return;
+            }
+        }
+
+
         // Do not preload all images, this is just not performant.
         // Especially in gif or high-res subreddits where each image can be 50 MB.
         // My high-end desktop browser was unresponsive at times.
@@ -364,7 +425,7 @@ $(function () {
             .data("index", i)
             .attr("title", rp.photos[i].title)
             .attr("id", "numberButton" + (i + 1));
-        if(pic.over18) {
+        if (pic.over18) {
             numberButton.addClass("over18");
         }
         numberButton.click(function () {
@@ -388,15 +449,18 @@ $(function () {
     //var ENTER = 13;
     var A_KEY = 65;
     var C_KEY = 67;
+    var M_KEY = 77;
     var F_KEY = 70;
     var I_KEY = 73;
     var R_KEY = 82;
     var T_KEY = 84;
+    var W_KEY = 87;
+    var S_KEY = 83;
 
-    
+
     // Register keyboard events on the whole document
     $(document).keyup(function (e) {
-        if(e.ctrlKey) {
+        if (e.ctrlKey) {
             // ctrl key is pressed so we're most likely switching tabs or doing something
             // unrelated to redditp UI
             return;
@@ -420,7 +484,8 @@ $(function () {
                 $('#titleDiv .collapser').click();
                 break;
             case A_KEY:
-                $("#autoNextSlide").prop("checked", !$("#autoNextSlide").is(':checked'));
+                var $ans = $("#autoNextSlide");
+                $ans.prop("checked", !$ans.is(':checked'));
                 updateAutoNext();
                 break;
             case I_KEY:
@@ -432,14 +497,19 @@ $(function () {
             case F_KEY:
                 toggleFullScreen();
                 break;
+            case M_KEY:
+                toggleSound();
+                break;
             case PAGEUP:
             case arrow.left:
             case arrow.up:
+            case W_KEY:
                 return prevSlide();
             case PAGEDOWN:
             case arrow.right:
             case arrow.down:
             case SPACE:
+            case S_KEY:
                 return nextSlide();
         }
     });
@@ -452,36 +522,92 @@ $(function () {
         // Retrieve the index we need to use
         var imageIndex = docElem.data("index");
 
+        saveHistory(imageIndex);
         startAnimation(imageIndex);
     };
 
-    var isLastImage = function(imageIndex) {
-        if(rp.settings.nsfw) {
-            if(imageIndex == rp.photos.length - 1) {
-                return true;
-            } else {
-                return false;
-            }
+    var isLastImage = function (imageIndex) {
+        if (rp.settings.nsfw) {
+            return imageIndex === rp.photos.length - 1;
         } else {
             // look for remaining sfw images
-            for(var i = imageIndex + 1; i < rp.photos.length; i++) {
-                if(!rp.photos[i].over18) {
+            for (var i = imageIndex + 1; i < rp.photos.length; i++) {
+                if (!rp.photos[i].over18) {
                     return false;
                 }
             }
             return true;
         }
     };
-    
-    var preloadNextImage = function(imageIndex) {
+
+    var preloadNextImage = function (imageIndex) {
         var next = getNextSlideIndex(imageIndex);
         // Always clear cache - no need for memory bloat.
         // We only keep the next image preloaded.
         rp.cache = {};
-        if(next < rp.photos.length)
+        if (next < rp.photos.length)
             rp.cache[next] = createDiv(next);
     };
-    
+
+    // History / back button stuff
+    var lastSavedHistoryState = {
+        index: -1,
+        url: "",
+    };
+    var scheduledAnimation = null;
+
+    var loadHistory = function(state) {
+        //console.log("Loading history state " + event.state);
+
+        var index;
+        if (state == null || rp.photos[state.index] == null || rp.photos[state.index].url != state.url) {
+            index = 0;
+        } else {
+            index = state.index;
+            lastSavedHistoryState = state;
+        }
+
+        startAnimation(index);
+    };
+
+    window.onpopstate = function(event) {
+        // This is called when back/forward button is pressed and there is custom history states saved.
+        loadHistory(event.state);
+    };
+
+    var saveHistory = function(index) {
+        if (window.history == null) {
+            return; // History api is not supported, do nothing
+        }
+
+        var photo = rp.photos[index];
+        if (index != lastSavedHistoryState.index && photo != null) {
+            //console.log("Recorded history state " + index);
+            lastSavedHistoryState = {
+                index: index,
+                url: photo.url,
+            };
+            history.pushState(lastSavedHistoryState, photo.title);
+        }
+    };
+
+    var animationFinished = function() {
+        if (scheduledAnimation != null) {
+            var next = scheduledAnimation;
+            scheduledAnimation = null;
+            startAnimation(next);
+        }
+    };
+
+    var showDefault = function() {
+        // What to show initially
+        if (window.history != null) {
+            loadHistory(history.state);
+        } else {
+            startAnimation(0);
+        }
+    };
+
     //
     // Starts the animation, based on the image index
     //
@@ -489,9 +615,15 @@ $(function () {
     var startAnimation = function (imageIndex) {
         resetNextSlideTimer();
 
+        if (rp.session.isAnimating) {
+            // If animating, queue given image to be animated after this
+            scheduledAnimation = imageIndex;
+            return;
+        }
+
         // If the same number has been chosen, or the index is outside the
         // rp.photos range, or we're already animating, do nothing
-        if (rp.session.activeIndex == imageIndex || imageIndex > rp.photos.length - 1 || imageIndex < 0 || rp.session.isAnimating || rp.photos.length == 0) {
+        if (rp.session.activeIndex === imageIndex || imageIndex > rp.photos.length - 1 || imageIndex < 0 || rp.session.isAnimating || rp.photos.length === 0) {
             return;
         }
 
@@ -503,7 +635,7 @@ $(function () {
         // Set the active index to the used image index
         rp.session.activeIndex = imageIndex;
 
-        if (isLastImage(rp.session.activeIndex) && rp.subredditUrl.indexOf('/imgur') != 0) {
+        if (isLastImage(rp.session.activeIndex) && rp.subredditUrl.indexOf('/imgur') !== 0) {
             getRedditImages();
         }
     };
@@ -529,12 +661,14 @@ $(function () {
         $('#navboxLink').attr('href', photo.url).attr('title', photo.title);
         $('#navboxCommentsLink').attr('href', photo.commentsLink).attr('title', "Comments on reddit");
 
+        document.title = photo.title + " - " + subreddit + " - redditP";
+
         toggleNumberButton(rp.session.activeIndex, false);
         toggleNumberButton(imageIndex, true);
     };
 
     var playButton = $('<img id="playButton" src="/images/play.svg" />');
-    playButton.click(function() {
+    playButton.click(function () {
         if ($('video')[0]) {
             $('video')[0].play();
         } else {
@@ -546,13 +680,17 @@ $(function () {
     $(pictureSliderId).append(playButton);
     playButton.hide();
 
-    var startPlayingVideo = function(vid_jq) {
+    var startPlayingVideo = function (vid_jq) {
         // Loop or auto next slide
         // TODO: make this update every time you check/uncheck auto-play
         if (rp.settings.shouldAutoNextSlide) {
             clearTimeout(rp.session.nextSlideTimeoutId);
             vid_jq.removeAttr('loop');
         }
+
+        // sound cookie setting
+        vid_jq[0].muted = !rp.settings.sound;
+
         var onEndFunc = function (/*e*/) {
             if (rp.settings.shouldAutoNextSlide)
                 nextSlide();
@@ -563,10 +701,10 @@ $(function () {
         var playPromise = vid_jq[0].play();
         if (playPromise && playPromise.catch) {
             // playPromise is `undefined` in firefox 46-48 it seems
-            playPromise.catch(function(e) {
+            playPromise.catch(function (e) {
                 // a trick to get around: DOMException: play() can only be initiated by a user gesture.
                 // We show a play button that the user can press
-                if(e.name === "NotAllowedError") {
+                if (e.name === "NotAllowedError") {
                     //code: 0
                     //message: "play() can only be initiated by a user gesture."
                     //name: "NotAllowedError"
@@ -583,7 +721,7 @@ $(function () {
                 console.log(e);
             });
         }
-    }
+    };
 
     //
     // Slides the background photos
@@ -602,15 +740,16 @@ $(function () {
         oldDiv.fadeOut(rp.settings.animationSpeed, function () {
             oldDiv.remove();
             rp.session.isAnimating = false;
-            
+            animationFinished();
+
             var maybeVid = $('video');
-            if(maybeVid.length > 0) {
+            if (maybeVid.length > 0) {
                 startPlayingVideo(maybeVid);
             }
         });
-    }
-    
-    var createDiv = function(imageIndex) {
+    };
+
+    var createDiv = function (imageIndex) {
         // Retrieve the accompanying photo based on the index
         var photo = rp.photos[imageIndex];
         //log("Creating div for " + imageIndex + " - " + photo.url);
@@ -633,18 +772,36 @@ $(function () {
             cssMap['background-position'] = "center";
 
             divNode.css(cssMap).addClass("clouds");
-            
+
         } else { //if(photo.type === imageTypes.gfycat || photo.type === imageTypes.gifv) {
-            embedit.embed(photo.url, function(elem) {
+            embedit.embed(photo.url, function (elem) {
                 if (!elem) {
                     reportError('Failed to handle url');
                     return divNode;
                 }
                 divNode.append(elem);
                 $(elem).attr({
-                    muted: '',
                     playsinline: '',
                 });
+                if (photo.sound) {
+                    // this case is for videos from v.redd.it domain only
+                    $("<audio loop autoplay " + (rp.settings.sound ? '' : 'muted') + "><source src='" + photo.sound + "' type='audio/aac'/></audio>").appendTo($(elem));
+
+                    var $audioTag = $("audio", elem).get(0);
+                    var $videoTag = $("video", divNode).get(0);
+
+                    // sync reddit audio and video tracks
+                    $audioTag.currentTime = $videoTag.currentTime;
+                    $videoTag.onplay = function () {
+                        $audioTag.play();
+                    };
+                    $videoTag.onpause = function () {
+                        $audioTag.pause();
+                    };
+                    $videoTag.onseeking = function () {
+                        $audioTag.currentTime = $videoTag.currentTime;
+                    }
+                }
                 elem.width('100%').height('100%');
                 // We start paused and play after the fade in.
                 // This is to avoid cached or preloaded videos from playing.
@@ -653,30 +810,29 @@ $(function () {
         }// else {
         //    reportError('Unhandled image type');
         //}
-        
+
         return divNode;
     };
 
-    
-    
-    var verifyNsfwMakesSense = function() {
+
+    var verifyNsfwMakesSense = function () {
         // Cases when you forgot NSFW off but went to /r/nsfw
         // can cause strange bugs, let's help the user when over 80% of the
         // content is NSFW.
         var nsfwImages = 0;
-        for(var i = 0; i < rp.photos.length; i++) {
-            if(rp.photos[i].over18) {
+        for (var i = 0; i < rp.photos.length; i++) {
+            if (rp.photos[i].over18) {
                 nsfwImages += 1;
             }
         }
-        
-        if(0.8 < nsfwImages * 1.0 / rp.photos.length) {
+
+        if (0.8 < nsfwImages * 1.0 / rp.photos.length) {
             rp.settings.nsfw = true;
             $("#nsfw").prop("checked", rp.settings.nsfw);
         }
     };
-    
-    
+
+
     var tryConvertUrl = function (url) {
         if (url.indexOf('imgur.com') > 0 || url.indexOf('/gallery/') > 0) {
             // special cases with imgur
@@ -693,7 +849,7 @@ $(function () {
                 //log('Unsupported gallery: ' + url);
                 return '';
             }
-            
+
             // imgur is really nice and serves the image with whatever extension
             // you give it. '.jpg' is arbitrary
             // regexp removes /r/<sub>/ prefix if it exists
@@ -711,12 +867,7 @@ $(function () {
         }
         var extension = url.substring(dotLocation);
 
-        if (rp.settings.goodExtensions.indexOf(extension) >= 0) {
-            return true;
-        } else {
-            //log("skipped bad extension: " + url);
-            return false;
-        }
+        return rp.settings.goodExtensions.indexOf(extension) >= 0;
     };
 
     var decodeUrl = function (url) {
@@ -727,7 +878,7 @@ $(function () {
         // Detect predefined reddit url paths. If you modify this be sure to fix
         // .htaccess
         // This is a good idea so we can give a quick 404 page when appropriate.
-        
+
         var regexS = "(/(?:(?:r/)|(?:imgur/a/)|(?:u(?:ser)?/)|(?:domain/)|(?:search))[^&#?]*)[?]?(.*)";
         var regex = new RegExp(regexS);
         var results = regex.exec(window.location.href);
@@ -739,19 +890,45 @@ $(function () {
         }
     };
 
-    var failCleanup = function() {
+    var failCleanup = function () {
         if (rp.photos.length > 0) {
             // already loaded images, don't ruin the existing experience
             return;
         }
-        
+
         // remove "loading" title
         $('#navboxTitle').text('');
-        
+
         // display alternate recommendations
-        $('#recommend').css({'display':'block'});
+        $('#recommend').css({ 'display': 'block' });
     };
-    
+
+    var parseQuery = function (queryString) {
+        var query = {};
+        var pairs = (queryString[0] === '?' ? queryString.substr(1) : queryString).split('&');
+        for (var i = 0; i < pairs.length; i++) {
+            var pair = pairs[i].split('=');
+            query[decodeURIComponent(pair[0])] = decodeURIComponent(pair[1] || '');
+        }
+        return query;
+    };
+
+    var shuffle = function (arr) {
+        var i, j, x;
+        for (i = arr.length - 1; i > 0; i--) {
+            j = Math.floor(Math.random() * (i + 1));
+            x = arr[i];
+            arr[i] = arr[j];
+            arr[j] = x;
+        }
+        return arr;
+    };
+
+    var isShuffleOn = function () {
+        var query = parseQuery(window.location.search);
+        return !!query.shuffle;
+    };
+
     var getRedditImages = function () {
         //if (noMoreToLoad){
         //    log("No more images to load, will rotate to start.");
@@ -760,7 +937,18 @@ $(function () {
 
         rp.session.loadingNextImages = true;
 
-        var jsonUrl = rp.redditBaseUrl + rp.subredditUrl + ".json?jsonp=?" + rp.session.after + "&" + getVars;
+        var subredditUrl = rp.subredditUrl;
+
+        // If requesting more images from an already-loaded random page, grab
+        // the actual current subreddit from the photos; after= doesn't work on
+        // random pages.
+        if (rp.photos.length > 0 && (subredditUrl === "/r/randnsfw" || subredditUrl === "/r/random")) {
+            subredditUrl = "/r/" + rp.photos[0].subreddit;
+        }
+
+        // Note that JSONP requests require `".json?jsonp=?"` here.
+        var jsonUrl = rp.redditBaseUrl + subredditUrl + ".json?" + (rp.session.after ? rp.session.after + "&" : "") + getVars;
+
         var failedAjax = function (/*data*/) {
             var message = "Failed ajax, maybe a bad url? Sorry about that :(";
             var isFirefox = navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
@@ -772,6 +960,14 @@ $(function () {
         };
 
         var handleData = function (data) {
+            // handle single page json
+            if (data && data.length === 2 && data[0].data.children.length === 1) {
+                // this means we're in single post link
+                // response consists of two json objects, one for post, one for comments
+                data = data[0];
+                rp.session.loadingNextImages = false;
+            }
+
             //redditData = data //global for debugging data
             // NOTE: if data.data.after is null then this causes us to start
             // from the top on the next getRedditImages which is fine.
@@ -797,6 +993,10 @@ $(function () {
                 return;
             }
 
+            if (isShuffleOn()) {
+                shuffle(children)
+            }
+
             $.each(children, function (i, item) {
                 // `item.data.link_url` seems to be an item for reddit images
                 // or maybe the api change for user pages?
@@ -817,7 +1017,7 @@ $(function () {
             });
 
             verifyNsfwMakesSense();
-            
+
             if (!rp.session.foundOneImage) {
                 // Note: the jsonp url may seem malformed but jquery fixes it.
                 //log(jsonUrl);
@@ -826,7 +1026,8 @@ $(function () {
 
             // show the first image
             if (rp.session.activeIndex == -1) {
-                startAnimation(0);
+                // was startShow()
+                showDefault();
             }
 
             if (data.data.after == null) {
@@ -837,17 +1038,33 @@ $(function () {
                 addNumberButton(numberButton);
             }
             rp.session.loadingNextImages = false;
-            
+
         };
 
         if (rp.settings.debug)
             console.log('Ajax requesting: ' + jsonUrl);
 
+        // Note we're still using `jsonp` despite potential issues because
+        // `http://www.redditp.com/r/randnsfw` wasn't working with CORS for some reason.
+        // https://github.com/ubershmekel/redditp/issues/104
+        // Another issue caused with these is 
+        // multireddits of a user. E.g.
+        // http://localhost:8080/?/u/eightbitbailey/submitted
+        // http://www.redditp.com/u/eightbitbailey/submitted
+        // var useJsonP = jsonUrl.indexOf('\/comments\/') !== -1
+        //     || jsonUrl.indexOf('\/r\/randnsfw') !== -1
+        //     || jsonUrl.indexOf('\/r\/random') !== -1;
+        var useJsonP = true;
+        if (useJsonP) {
+            jsonUrl += '&jsonp=?';
+        }
+
         // I still haven't been able to catch jsonp 404 events so the timeout
         // is the current solution sadly.
         $.ajax({
             url: jsonUrl,
-            dataType: 'jsonp',
+            dataType: useJsonP ? 'jsonp' : 'json',
+            jsonp: useJsonP,
             success: handleData,
             error: failedAjax,
             404: failedAjax,
@@ -867,18 +1084,23 @@ $(function () {
 
             //log(data);
 
-            if (data.data.images.length === 0) {
+            var children = data.data.images;
+            if (children.length === 0) {
                 reportError("No data from this url :(");
                 return;
             }
 
-            $.each(data.data.images, function (i, item) {
+            if (isShuffleOn()) {
+                shuffle(children)
+            }
+
+            $.each(children, function (i, item) {
                 addImageSlide({
                     url: item.link,
                     title: item.title,
                     over18: item.nsfw,
                     commentsLink: ""
-                });                
+                });
             });
 
             verifyNsfwMakesSense();
@@ -889,8 +1111,9 @@ $(function () {
             }
 
             // show the first image
-            if (rp.session.activeIndex == -1) {
-                startAnimation(0);
+            if (rp.session.activeIndex === -1) {
+                // was startShow();
+                showDefault();
             }
 
             //log("No more pages to load from this subreddit, reloading the start");
@@ -909,18 +1132,19 @@ $(function () {
             error: failedAjax,
             404: failedAjax,
             timeout: 5000,
-            beforeSend : function(xhr) {
+            beforeSend: function (xhr) {
                 xhr.setRequestHeader('Authorization',
-                    'Client-ID ' + 'f2edd1ef8e66eaf');}
+                    'Client-ID ' + 'f2edd1ef8e66eaf');
+            }
         });
     };
 
-    var setupUrls = function() {
+    var setupUrls = function () {
         rp.urlData = rp.getRestOfUrl();
         //log(rp.urlData)
         rp.subredditUrl = rp.urlData[0];
         getVars = rp.urlData[1];
-        
+
         if (getVars.length > 0) {
             getVarsQuestionMark = "?" + getVars;
         } else {
@@ -941,26 +1165,24 @@ $(function () {
         } else {
             subredditName = rp.subredditUrl + getVarsQuestionMark;
         }
-        
+
 
         var visitSubredditUrl = rp.redditBaseUrl + rp.subredditUrl + getVarsQuestionMark;
-        
+
         // truncate and display subreddit name in the control box
         var displayedSubredditName = subredditName;
         // empirically tested capsize, TODO: make css rules to verify this is enough.
         // it would make the "nsfw" checkbox be on its own line :(
         var capsize = 19;
-        if(displayedSubredditName.length > capsize) {
-            displayedSubredditName = displayedSubredditName.substr(0,capsize) + "&hellip;";
+        if (displayedSubredditName.length > capsize) {
+            displayedSubredditName = displayedSubredditName.substr(0, capsize) + "&hellip;";
         }
         $('#subredditUrl').html("<a href='" + visitSubredditUrl + "'>" + displayedSubredditName + "</a>");
 
         document.title = "redditP - " + subredditName;
     };
-    
-    
 
-    
+
     rp.redditBaseUrl = "http://www.reddit.com";
     if (location.protocol === 'https:') {
         // page is secure
@@ -970,14 +1192,14 @@ $(function () {
 
     var getVars;
     var getVarsQuestionMark;
-    
+
     initState();
     setupUrls();
 
     // if ever found even 1 image, don't show the error
     rp.session.foundOneImage = false;
 
-    if(rp.subredditUrl.indexOf('/imgur') == 0) {
+    if (rp.subredditUrl.indexOf('/imgur') === 0) {
         getImgurAlbum(rp.subredditUrl);
     } else {
         getRedditImages();
