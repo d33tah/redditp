@@ -12,11 +12,10 @@ var rp = {};
 rp.settings = {
     debug: true,
     // Speed of the animation
-    animationSpeed: 1000,
+    animationSpeed: 100,
     shouldAutoNextSlide: true,
     timeToNextSlide: 6 * 1000,
     cookieDays: 300,
-    goodExtensions: ['.jpg', '.jpeg', '.gif', '.bmp', '.png'],
     nsfw: true,
     sound: false
 };
@@ -51,7 +50,7 @@ function reportError(errMessage) {
     if (window.errorHandler && window.errorHandler.report) {
         window.errorHandler.report(new Error(errMessage));
     } else {
-        console.log('No error handler yet:' + errMessage);
+        console.log('No error handler yet: ' + errMessage);
     }
     toastr.error(errMessage + ', please alert ubershmekel on <a href="https://github.com/ubershmekel/redditp/issues">github</a>');
 }
@@ -206,7 +205,12 @@ $(function () {
     };
 
     var setCookie = function (c_name, value) {
-        Cookies.set(c_name, value, { expires: rp.settings.cookieDays });
+        Cookies.set(c_name, value, {
+            expires: rp.settings.cookieDays,
+            // All the cookie issues are from requests to reddit.com
+            // So no need for this "Lax" here.
+            // sameSite: "Lax",
+        });
     };
 
 
@@ -343,14 +347,9 @@ $(function () {
     };
 
 
-    var imageTypes = {
-        image: 'image',
-        gfycat: 'gfycat',
-        gifv: 'gifv',
-        redgif: 'redgif'
-    };
 
-    var addImageSlide = function (pic) {
+
+    var addImageSlide = function (item) {
         /*
         var pic = {
             "title": title,
@@ -360,49 +359,10 @@ $(function () {
             "isVideo": video
         }
         */
-        pic.type = imageTypes.image;
-        // Replace HTTP with HTTPS on gfycat and imgur to avoid this:
-        //      Mixed Content: The page at 'https://redditp.com/r/gifs' was loaded over HTTPS, but requested an insecure video 'http://i.imgur.com/LzsnbNU.webm'. This content should also be served over HTTPS.
-        var http_prefix = 'http://';
-        var https_prefix = 'https://';
-        if (pic.url.indexOf('gfycat.com') >= 0) {
-            pic.type = imageTypes.gfycat;
-            pic.url = pic.url.replace(http_prefix, https_prefix);
-        } else if (pic.url.indexOf('redgifs.com') >= 0) {
-            pic.type = imageTypes.redgif;
-            pic.url = pic.url.replace(http_prefix, https_prefix);
-        } else if (pic.url.indexOf('//v.redd.it/') >= 0) {
-            // NOTE DO NOT ADD DOMAINS HERE - MODIFY EMBEDIT.JS instead
-            // NOTE DO NOT ADD DOMAINS HERE - MODIFY EMBEDIT.JS instead
-            // NOTE DO NOT ADD DOMAINS HERE - MODIFY EMBEDIT.JS instead
-            // Sadly, we have to add domains here or they get dropped in the "cannot display url" error below.
-            // Need to redesign this redditp thing.
-            if (pic.data.media) {
-                pic.type = imageTypes.gifv;
-                pic.url = pic.data.media.reddit_video.fallback_url;
-            } else if (pic.data.crosspost_parent_list && pic.data.crosspost_parent_list[0].media) {
-                pic.type = imageTypes.gifv;
-                pic.url = pic.data.crosspost_parent_list[0].media.reddit_video.fallback_url;
-            } else {
-                // some crossposts don't have a pic.data.media obj?
-                return;
-            }
-            pic.sound = pic.url.substring(0, pic.url.lastIndexOf('/')) + "/audio";
-        } else if (pic.url.search(/^http.*imgur.*gifv?$/) > -1) {
-            pic.type = imageTypes.gifv;
-            pic.url = pic.url.replace(http_prefix, https_prefix);
-        } else if (isImageExtension(pic.url)) {
-            // simple image
-        } else {
-            var betterUrl = tryConvertUrl(pic.url);
-            if (betterUrl !== '') {
-                pic.url = betterUrl;
-            } else {
-                if (rp.settings.debug) {
-                    console.log('cannot display url as image: ' + pic.url);
-                }
-                return;
-            }
+
+        var pic = embedit.redditItemToPic(item);
+        if(!pic) {
+            return;
         }
 
         rp.session.foundOneImage = true;
@@ -456,6 +416,7 @@ $(function () {
     var T_KEY = 84;
     var W_KEY = 87;
     var S_KEY = 83;
+    var U_KEY = 85;
 
 
     // Register keyboard events on the whole document
@@ -490,6 +451,9 @@ $(function () {
                 break;
             case I_KEY:
                 open_in_background("#navboxLink");
+                break;
+            case U_KEY:
+                open_in_background("#navboxUser");
                 break;
             case R_KEY:
                 open_in_background("#navboxCommentsLink");
@@ -655,11 +619,13 @@ $(function () {
     var animateNavigationBox = function (imageIndex) {
         var photo = rp.photos[imageIndex];
         var subreddit = '/r/' + photo.subreddit;
+        var user = '/u/' + photo.userLink + '/submitted';
 
         $('#navboxTitle').html(photo.title);
-        $('#navboxSubreddit').attr('href', rp.redditBaseUrl + subreddit).html(subreddit);
+        $('#navboxSubreddit').attr('href', embedit.redditBaseUrl + subreddit).html(subreddit);
         $('#navboxLink').attr('href', photo.url).attr('title', photo.title);
         $('#navboxCommentsLink').attr('href', photo.commentsLink).attr('title', "Comments on reddit");
+        $('#navboxUser').attr('href', 'https://redditp.com' + user).attr('user', "User on reddit");
 
         document.title = photo.title + " - " + subreddit + " - redditP";
 
@@ -756,7 +722,7 @@ $(function () {
 
         // Create a new div and apply the CSS
         var divNode = $("<div />");
-        if (photo.type === imageTypes.image) {
+        if (photo.type === embedit.imageTypes.image) {
 
             // TODO: REFACTOR BOTH IMAGES AND VIDEOS TO WORK WITH ONE FRAMEWORK - EMBEDIT
 
@@ -830,44 +796,6 @@ $(function () {
             rp.settings.nsfw = true;
             $("#nsfw").prop("checked", rp.settings.nsfw);
         }
-    };
-
-
-    var tryConvertUrl = function (url) {
-        if (url.indexOf('imgur.com') > 0 || url.indexOf('/gallery/') > 0) {
-            // special cases with imgur
-
-            if (url.indexOf('gifv') >= 0) {
-                if (url.indexOf('i.') === 0) {
-                    url = url.replace('imgur.com', 'i.imgur.com');
-                }
-                return url.replace('.gifv', '.gif');
-            }
-
-            if (url.indexOf('/a/') > 0 || url.indexOf('/gallery/') > 0) {
-                // albums aren't supported yet
-                //log('Unsupported gallery: ' + url);
-                return '';
-            }
-
-            // imgur is really nice and serves the image with whatever extension
-            // you give it. '.jpg' is arbitrary
-            // regexp removes /r/<sub>/ prefix if it exists
-            // E.g. http://imgur.com/r/aww/x9q6yW9
-            return url.replace(/r\/[^ /]+\/(\w+)/, '$1') + '.jpg';
-        }
-
-        return '';
-    };
-    var isImageExtension = function (url) {
-        var dotLocation = url.lastIndexOf('.');
-        if (dotLocation < 0) {
-            console.log("skipped no dot: " + url);
-            return false;
-        }
-        var extension = url.substring(dotLocation);
-
-        return rp.settings.goodExtensions.indexOf(extension) >= 0;
     };
 
     var decodeUrl = function (url) {
@@ -947,7 +875,7 @@ $(function () {
         }
 
         // Note that JSONP requests require `".json?jsonp=?"` here.
-        var jsonUrl = rp.redditBaseUrl + subredditUrl + ".json?" + (rp.session.after ? rp.session.after + "&" : "") + getVars;
+        var jsonUrl = embedit.redditBaseUrl + subredditUrl + ".json?" + (rp.session.after ? rp.session.after + "&" : "") + getVars;
 
         var failedAjax = function (/*data*/) {
             var message = "Failed ajax, maybe a bad url? Sorry about that :(";
@@ -960,39 +888,15 @@ $(function () {
         };
 
         var handleData = function (data) {
-            // handle single page json
-            if (data && data.length === 2 && data[0].data.children.length === 1) {
-                // this means we're in single post link
-                // response consists of two json objects, one for post, one for comments
-                data = data[0];
-                rp.session.loadingNextImages = false;
-            }
-
-            //redditData = data //global for debugging data
-            // NOTE: if data.data.after is null then this causes us to start
-            // from the top on the next getRedditImages which is fine.
-            if (data && data.data && data.data.after) {
-                rp.session.after = "&after=" + data.data.after;
-            }
-
-            var children = [];
-            if (data && data.data && data.data.children) {
-                children = data.data.children;
-            } else {
-                // comments of e.g. a photoshopbattles post
-                //children = rp.flattenRedditData(data);
-                //throw new Error("Comments pages not yet supported");
-            }
-
-            if (children.length === 0) {
-                children = data;
-            }
+            var childrenAndAfter = embedit.processRedditJson(data);
+            var children = childrenAndAfter.children;
+            var after = childrenAndAfter.after;
 
             if (children.length === 0) {
                 reportError("No data from this url :(");
                 return;
             }
-
+        
             if (isShuffleOn()) {
                 shuffle(children)
             }
@@ -1006,14 +910,7 @@ $(function () {
                     reportError('invald data item');
                     return;
                 }
-                addImageSlide({
-                    url: item.data.url || item.data.link_url,
-                    title: item.data.title || item.data.link_title,
-                    over18: item.data.over_18,
-                    subreddit: item.data.subreddit,
-                    commentsLink: rp.redditBaseUrl + item.data.permalink,
-                    data: item.data,
-                });
+                addImageSlide(item);
             });
 
             verifyNsfwMakesSense();
@@ -1030,7 +927,9 @@ $(function () {
                 showDefault();
             }
 
-            if (data.data.after == null) {
+            if (after) {
+                rp.session.after = "&after=" + after;
+            } else {
                 console.log("No more pages to load from this subreddit, reloading the start");
 
                 // Show the user we're starting from the top
@@ -1167,28 +1066,22 @@ $(function () {
         }
 
 
-        var visitSubredditUrl = rp.redditBaseUrl + rp.subredditUrl + getVarsQuestionMark;
+        var visitSubredditUrl = embedit.redditBaseUrl + rp.subredditUrl + getVarsQuestionMark;
 
         // truncate and display subreddit name in the control box
         var displayedSubredditName = subredditName;
         // empirically tested capsize, TODO: make css rules to verify this is enough.
         // it would make the "nsfw" checkbox be on its own line :(
-        var capsize = 19;
+        var capsize = 50;
         if (displayedSubredditName.length > capsize) {
             displayedSubredditName = displayedSubredditName.substr(0, capsize) + "&hellip;";
         }
-        $('#subredditUrl').html("<a href='" + visitSubredditUrl + "'>" + displayedSubredditName + "</a>");
+        $('#subredditUrl').html("<a href='" + visitSubredditUrl + "'>sub</a>");
 
-        document.title = "redditP - " + subredditName;
+        // This `document.title` happens on page load and will later be overwritten
+        // by every slide that loads.
+        document.title = "redditP - " + displayedSubredditName;
     };
-
-
-    rp.redditBaseUrl = "http://www.reddit.com";
-    if (location.protocol === 'https:') {
-        // page is secure
-        rp.redditBaseUrl = "https://www.reddit.com";
-        // TODO: try "//" instead of specifying the protocol
-    }
 
     var getVars;
     var getVarsQuestionMark;

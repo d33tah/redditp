@@ -1,6 +1,26 @@
 // eslint-disable-next-line no-global-assign,no-native-reassign
 embedit = {};
 
+embedit.imageTypes = {
+    image: 'image',
+    gfycat: 'gfycat',
+    gifv: 'gifv',
+    redgif: 'redgif'
+};
+
+
+embedit.redditBaseUrl = "http://www.reddit.com";
+
+if (typeof window === "undefined") {
+    // eslint-disable-next-line no-redeclare
+    var window = {};
+}
+
+if (window.location && window.location.protocol === 'https:') {
+    // page is secure
+    embedit.redditBaseUrl = "https://www.reddit.com";
+}
+
 embedit.video = function (webmUrl, mp4Url) {
     // imgur is annoying and when you use the <source> tags
     // it tries to redirect you to the gifv page instead of serving
@@ -55,11 +75,12 @@ embedit.redGifConvert = function (url, embedFunc) {
         url: 'https://api.redgifs.com/v1/gfycats/' + name,
         dataType: "json",
         success: function(data) {
-            if (!data || !data.gfyItem || !data.gfyItem.webmUrl) {
+            if (!data || !data.gfyItem || !data.gfyItem.content_urls.mp4) {
+                console.log("gfy data missing video url");
                 embedFunc(null);
                 return;
             }
-            embedFunc(embedit.video(data.gfyItem.webmUrl, data.gfyItem.mp4Url));
+            embedFunc(embedit.video(null, data.gfyItem.content_urls.mp4.url));
         }
     })
     return true;
@@ -168,6 +189,14 @@ embedit.convertors = [
             return true;
         }
     },
+    {
+        name: "preview.redd.it",
+        detect: /preview\.redd\.it.*/,
+        convert: function (url, embedFunc) {
+            embedFunc(embedit.video(url));
+            return true;
+		}
+    }
 
 ]
 
@@ -210,6 +239,187 @@ embedit.redGifUrlToId = function(url) {
         return false;
     }
 }
+
+function isImageExtension(url) {
+    var goodExtensions = ['.jpg', '.jpeg', '.gif', '.bmp', '.png'];
+    var dotLocation = url.lastIndexOf('.');
+    if (dotLocation < 0) {
+        console.log("skipped no dot: " + url);
+        return false;
+    }
+    var extension = url.substring(dotLocation);
+
+    return goodExtensions.indexOf(extension) >= 0;
+}
+
+embedit.processRedditJson = function(data) {
+    var result = {
+        children: [],
+        after: null,
+    }
+
+    // handle single page json
+    if (data && data.length === 2 && data[0].data.children.length === 1) {
+        // this means we're in single post link
+        // response consists of two json objects, one for post, one for comments
+        data = data[0];
+    }
+
+    //redditData = data //global for debugging data
+    // NOTE: if data.data.after is null then this causes us to start
+    // from the top on the next getRedditImages which is fine.
+    if (data && data.data && data.data.after) {
+        result.after = data.data.after;
+    }
+
+    if (data && data.data && data.data.children) {
+        result.children = data.data.children;
+    } else {
+        // comments of e.g. a photoshopbattles post
+        //children = rp.flattenRedditData(data);
+        //throw new Error("Comments pages not yet supported");
+    }
+
+    if (result.children.length === 0) {
+        console.log("What case is this? Does the data have any length? Is this the standard nothing found case? TODO: debug this");
+        result.children = data;
+    }
+
+    return result;
+}
+
+embedit.redditItemToPic = function(item) {
+    var pic = {
+        url: item.data.url || item.data.link_url,
+        title: item.data.title || item.data.link_title,
+        over18: item.data.over_18,
+        subreddit: item.data.subreddit,
+        commentsLink: embedit.redditBaseUrl + item.data.permalink,
+        userLink: item.data.author,
+        data: item.data,
+    };
+
+    if (!embedit.transformRedditData(pic)) {
+        return null;
+    }
+
+    return pic;
+}
+
+function decodeEntities(encodedString) {
+    // https://stackoverflow.com/questions/44195322/a-plain-javascript-way-to-decode-html-entities-works-on-both-browsers-and-node
+    var translate_re = /&(nbsp|amp|quot|lt|gt);/g;
+    var translate = {
+        "nbsp":" ",
+        "amp" : "&",
+        "quot": "\"",
+        "lt"  : "<",
+        "gt"  : ">"
+    };
+    return encodedString.replace(translate_re, function(match, entity) {
+        return translate[entity];
+    }).replace(/&#(\d+);/gi, function(match, numStr) {
+        var num = parseInt(numStr, 10);
+        return String.fromCharCode(num);
+    });
+}
+
+
+embedit.transformRedditData = function(pic) {
+    // TODO: convert this to a more functional style
+
+    pic.type = embedit.imageTypes.image;
+    // Replace HTTP with HTTPS on gfycat and imgur to avoid this:
+    //      Mixed Content: The page at 'https://redditp.com/r/gifs' was loaded over HTTPS, but requested an insecure video 'http://i.imgur.com/LzsnbNU.webm'. This content should also be served over HTTPS.
+    var http_prefix = 'http://';
+    var https_prefix = 'https://';
+    if (pic.url.indexOf('gfycat.com') >= 0) {
+        pic.type = embedit.imageTypes.gfycat;
+        pic.url = pic.url.replace(http_prefix, https_prefix);
+    } else if (pic.url.indexOf('redgifs.com') >= 0) {
+        pic.type = embedit.imageTypes.redgif;
+        pic.url = pic.url.replace(http_prefix, https_prefix);
+    } else if (pic.url.indexOf('//v.redd.it/') >= 0) {
+        // NOTE DO NOT ADD DOMAINS HERE - MODIFY EMBEDIT.JS instead
+        // NOTE DO NOT ADD DOMAINS HERE - MODIFY EMBEDIT.JS instead
+        // NOTE DO NOT ADD DOMAINS HERE - MODIFY EMBEDIT.JS instead
+        // Sadly, we have to add domains here or they get dropped in the "cannot display url" error below.
+        // Need to redesign this redditp thing.
+        if (pic.data.media) {
+            pic.type = embedit.imageTypes.gifv;
+            pic.url = pic.data.media.reddit_video.fallback_url;
+        } else if (pic.data.crosspost_parent_list && pic.data.crosspost_parent_list[0].media) {
+            pic.type = embedit.imageTypes.gifv;
+            pic.url = pic.data.crosspost_parent_list[0].media.reddit_video.fallback_url;
+        } else {
+            // some crossposts don't have a pic.data.media obj?
+            return false;
+        }
+        pic.sound = pic.url.substring(0, pic.url.lastIndexOf('/')) + "/DASH_audio.mp4";
+    } else if (pic.url.search(/^http.*imgur.*gifv?$/) > -1) {
+        pic.type = embedit.imageTypes.gifv;
+        pic.url = pic.url.replace(http_prefix, https_prefix);
+    } else if (pic.url.indexOf("reddit.com/gallery") >= 0) {
+        console.log("GOTCHA!");
+        if (pic.data.gallery_data && pic.data.gallery_data.items) {
+            var firstItemId = pic.data.gallery_data.items[0].media_id;
+            var encodedUrl = pic.data.media_metadata[firstItemId]["s"]["u"];
+            pic.type = embedit.imageTypes.image;
+            if (encodedUrl === undefined) {
+                // some posts don't have the u key, but have gif and mp4 keys
+                encodedUrl = pic.data.media_metadata[firstItemId]["s"]["mp4"];
+                pic.type = embedit.imageTypes.gifv;
+            }
+            pic.url = decodeEntities(encodedUrl);
+        }
+        console.log(pic.url)
+    } else if (isImageExtension(pic.url)) {
+        // simple image
+    } else {
+        var betterUrl = tryConvertUrl(pic.url);
+        if (betterUrl !== '') {
+            pic.url = betterUrl;
+        } else {
+            if (window.debug) {
+                console.log('cannot display url as image: ' + pic.url);
+            }
+            return false;
+        }
+    }
+
+    return true;
+}
+
+var tryConvertUrl = function (url) {
+    if (url.indexOf('imgur.com') > 0 || url.indexOf('/gallery/') > 0) {
+        // special cases with imgur
+
+        if (url.indexOf('gifv') >= 0) {
+            if (url.indexOf('i.') === 0) {
+                url = url.replace('imgur.com', 'i.imgur.com');
+            }
+            return url.replace('.gifv', '.gif');
+        }
+
+        if (url.indexOf('/a/') > 0 || url.indexOf('/gallery/') > 0) {
+            // albums aren't supported yet
+            //log('Unsupported gallery: ' + url);
+            return '';
+        }
+
+        // imgur is really nice and serves the image with whatever extension
+        // you give it. '.jpg' is arbitrary
+        // regexp removes /r/<sub>/ prefix if it exists
+        // E.g. http://imgur.com/r/aww/x9q6yW9
+        return url.replace(/r\/[^ /]+\/(\w+)/, '$1') + '.jpg';
+    }
+
+    return '';
+};
+
+//////////////////////////////////////////////////////////
+// Exports
+//////////////////////////////////////////////////////////
 
 function browserNodeExport(exported, name) {
     // based off of http://www.matteoagosti.com/blog/2013/02/24/writing-javascript-modules-for-both-browser-and-node/
